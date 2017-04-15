@@ -54,7 +54,7 @@ public class DefaultCoordinationService implements CoordinationService {
         } catch (ExecutionException e) {
             Exceptions.sneakyThrow(e.getCause());
         } finally {
-            lockedResources.remove(lock);
+            resourcesInUse.remove(lock);
             lock.unlock();
         }
     }
