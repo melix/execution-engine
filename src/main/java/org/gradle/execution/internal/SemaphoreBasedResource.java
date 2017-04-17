@@ -18,10 +18,14 @@ package org.gradle.execution.internal;
 import org.gradle.execution.ResourceLock;
 import org.gradle.execution.ResourceLockVisitor;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
 
 public class SemaphoreBasedResource implements ResourceLock {
     private final Semaphore lock;
+    private Set<LockListener> listeners = Collections.synchronizedSet(new HashSet<>());
     private final Object condition = new Object();
 
     public SemaphoreBasedResource(int permits) {
@@ -43,6 +47,9 @@ public class SemaphoreBasedResource implements ResourceLock {
         lock.release();
         synchronized (condition) {
             condition.notifyAll();
+            for (LockListener listener : listeners) {
+                listener.onUnlock(this);
+            }
         }
     }
 
@@ -60,6 +67,16 @@ public class SemaphoreBasedResource implements ResourceLock {
     @Override
     public void visit(final ResourceLockVisitor visitor) {
         visitor.visit(this);
+    }
+
+    @Override
+    public void addListener(final LockListener listener) {
+        listeners.add(listener);
+    }
+
+    @Override
+    public void removeListener(final LockListener listener) {
+        listeners.remove(listener);
     }
 
     @Override

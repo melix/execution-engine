@@ -22,4 +22,11 @@ public interface ResourceLock {
     void await();
 
     void visit(ResourceLockVisitor visitor);
+
+    void addListener(LockListener listener);
+    void removeListener(LockListener listener);
+
+    interface LockListener {
+        void onUnlock(ResourceLock unlockedResource);
+    }
 }

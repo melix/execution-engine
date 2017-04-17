@@ -37,11 +37,12 @@ public class DefaultCoordinationService implements CoordinationService {
     @Override
     public void withResourceLock(final ResourceLock lock, final Action<? super ResourcesUnderLock> action) {
         List<ResourceLock> lockedResources = new ArrayList<>();
-        lock.visit(this::deadlockDetection);
+        //lock.visit(this::deadlockDetection);
         lock.visit(lockedResources::add);
         while (!lock.tryLock()) {
             lock.await();
         }
+        System.out.println("Acquired " + lock);
         resourcesInUse.add(lock);
         Future<?> future = executorService.submit(() -> {
             ResourcesUnderLock rul = new DefaultResourcesUnderLock(lockedResources.toArray(new ResourceLock[0]));
@@ -55,6 +56,7 @@ public class DefaultCoordinationService implements CoordinationService {
             Exceptions.sneakyThrow(e.getCause());
         } finally {
             resourcesInUse.remove(lock);
+            System.out.println("Released " + lock);
             lock.unlock();
         }
     }

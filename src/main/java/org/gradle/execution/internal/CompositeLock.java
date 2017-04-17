@@ -19,11 +19,15 @@ import org.gradle.execution.ResourceLock;
 import org.gradle.execution.ResourceLockVisitor;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-public class CompositeLock implements ResourceLock {
+public class CompositeLock implements ResourceLock, ResourceLock.LockListener {
     private final ResourceLock[] locks;
     private final Object condition = new Object();
+    private Set<LockListener> listeners = Collections.synchronizedSet(new HashSet<>());
 
     public CompositeLock(ResourceLock... locks) {
         this.locks = locks;
@@ -64,15 +68,25 @@ public class CompositeLock implements ResourceLock {
         synchronized (condition) {
             condition.notifyAll();
         }
+        for (LockListener listener : listeners) {
+            listener.onUnlock(this);
+        }
     }
 
     @Override
     public void await() {
         synchronized (condition) {
             try {
+                for (ResourceLock lock : locks) {
+                    lock.addListener(this);
+                }
                 condition.wait();
             } catch (InterruptedException e) {
                 Exceptions.sneakyThrow(e);
+            } finally {
+                for (ResourceLock lock : locks) {
+                    lock.removeListener(this);
+                }
             }
         }
     }
@@ -82,6 +96,23 @@ public class CompositeLock implements ResourceLock {
         visitor.visit(this);
         for (ResourceLock lock : locks) {
             lock.visit(visitor);
+        }
+    }
+
+    @Override
+    public void addListener(final LockListener listener) {
+        listeners.add(listener);
+    }
+
+    @Override
+    public void removeListener(final LockListener listener) {
+        listeners.remove(listener);
+    }
+
+    @Override
+    public void onUnlock(final ResourceLock unlockedResource) {
+        synchronized (condition) {
+            condition.notifyAll();
         }
     }
 }
