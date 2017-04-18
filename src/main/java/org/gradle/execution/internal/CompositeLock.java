@@ -24,10 +24,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-public class CompositeLock implements ResourceLock, ResourceLock.LockListener {
+public class CompositeLock extends AbstractResourceLock implements ResourceLock.LockListener {
     private final ResourceLock[] locks;
     private final Object condition = new Object();
-    private Set<LockListener> listeners = Collections.synchronizedSet(new HashSet<>());
 
     public CompositeLock(ResourceLock... locks) {
         this.locks = locks;
@@ -68,9 +67,7 @@ public class CompositeLock implements ResourceLock, ResourceLock.LockListener {
         synchronized (condition) {
             condition.notifyAll();
         }
-        for (LockListener listener : listeners) {
-            listener.onUnlock(this);
-        }
+        super.unlock();
     }
 
     @Override
@@ -97,16 +94,6 @@ public class CompositeLock implements ResourceLock, ResourceLock.LockListener {
         for (ResourceLock lock : locks) {
             lock.visit(visitor);
         }
-    }
-
-    @Override
-    public void addListener(final LockListener listener) {
-        listeners.add(listener);
-    }
-
-    @Override
-    public void removeListener(final LockListener listener) {
-        listeners.remove(listener);
     }
 
     @Override

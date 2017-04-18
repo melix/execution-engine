@@ -2,6 +2,8 @@ package org.gradle.execution
 
 import org.gradle.execution.internal.CompositeLock
 import org.gradle.execution.internal.DefaultCoordinationService
+import org.gradle.execution.internal.LockFree
+import org.gradle.execution.internal.SemaphoreBasedResource
 import org.gradle.execution.internal.SimpleResourceLock
 import spock.lang.Ignore
 import spock.lang.Specification
@@ -13,9 +15,28 @@ import java.util.concurrent.atomic.AtomicLong
 
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class DefaultCoordinationServiceTest extends Specification {
-    def service = new DefaultCoordinationService()
+    def service = DefaultCoordinationService.withDynamicPoolSize()
 
     final AtomicInteger concurrent = new AtomicInteger()
+    volatile int maxConcurrent
+
+    private void measureConcurrentRequests(Closure cl) {
+        concurrent.incrementAndGet()
+        try {
+            cl.call()
+        } finally {
+            synchronized (concurrent) {
+                maxConcurrent = Math.max(maxConcurrent, concurrent.getAndDecrement())
+            }
+        }
+    }
+
+    void assertMaxConcurrentRequests(int max=1) {
+        if (maxConcurrent>max) {
+            throw new AssertionError("Expected a maximum number of concurrent requests of $max but was ${concurrent.get()}")
+        }
+        println "Max concurrent requests: ${maxConcurrent}"
+    }
 
     def "can lock resource"() {
         def resource = new SimpleResourceLock()
@@ -23,28 +44,26 @@ class DefaultCoordinationServiceTest extends Specification {
         async {
             start {
                 service.withResourceLock(resource) {
-                    if (concurrent.incrementAndGet()>1) {
-                        throw new AssertionError("Locking failure")
+                    measureConcurrentRequests {
+                        println 'Use lock from 1'
+                        sleep 200
                     }
-                    println 'Use lock from 1'
-                    sleep 200
-                    concurrent.decrementAndGet()
                 }
             }
             start {
                 service.withResourceLock(resource) {
-                    if (concurrent.incrementAndGet()>1) {
-                        throw new AssertionError("Locking failure")
+                    measureConcurrentRequests {
+                        println 'Use lock from 2'
+                        sleep 200
+                        concurrent.decrementAndGet()
                     }
-                    println 'Use lock from 2'
-                    sleep 200
-                    concurrent.decrementAndGet()
                 }
             }
         }
 
         then:
         noExceptionThrown()
+        assertMaxConcurrentRequests()
     }
 
     def "can acquire a composite lock"() {
@@ -54,27 +73,93 @@ class DefaultCoordinationServiceTest extends Specification {
                 lock1,
                 lock2
         )
-        Instant instant1, instant2
+
         when:
         async {
             start {
                 service.withResourceLock(composite) {
-                    instant1 = instant()
-                    sleep 200
+                    measureConcurrentRequests { sleep 200 }
                 }
             }
             start {
                 service.withResourceLock(composite) {
-                    instant2 = instant()
-                    sleep 200
+                    measureConcurrentRequests { sleep 200 }
                 }
             }
         }
 
         then:
         noExceptionThrown()
-        instant2.after instant1
+        assertMaxConcurrentRequests()
     }
+
+    def "can acquire a lock-free lease"() {
+        def resource = new LockFree()
+        when:
+        async {
+            5.times { id ->
+                start {
+                    service.withResourceLock(resource) {
+                        measureConcurrentRequests {
+                            println "Use lock from $id"
+                            sleep 1000
+                        }
+                    }
+                }
+            }
+        }
+
+        then:
+        noExceptionThrown()
+        assertMaxConcurrentRequests(5)
+    }
+
+    def "can have a max number of workers using a semaphore lock"() {
+        def resource = new SemaphoreBasedResource(3)
+        when:
+        async {
+            8.times { id ->
+                start {
+                    service.withResourceLock(resource) {
+                        measureConcurrentRequests {
+                            println "Use lock from $id"
+                            sleep 1000
+                        }
+                    }
+                }
+            }
+        }
+
+        then:
+        noExceptionThrown()
+        assertMaxConcurrentRequests(3)
+    }
+
+    def "can release workers using a semaphore lock"() {
+        def resource = new SemaphoreBasedResource(3)
+        when:
+        async {
+            8.times { id ->
+                start {
+                    service.withResourceLock(resource) { lease ->
+                        measureConcurrentRequests {
+                            println "Use lock from $id"
+                            lease.release(resource) {
+                                sleep 1000
+                            }
+                            sleep 1000
+                        }
+                    }
+                }
+            }
+        }
+
+        then:
+        noExceptionThrown()
+        assertMaxConcurrentRequests(8)
+    }
+
+
 
     def "cannot release a lock we don't own"() {
         def lock1 = new SimpleResourceLock()
@@ -194,26 +279,33 @@ class DefaultCoordinationServiceTest extends Specification {
         async {
             start {
                 service.withResourceLock(new CompositeLock(lock1, lock2)) {
-                    println "Using lock1 and lock2"
-                    sleep 200
+                    measureConcurrentRequests {
+                        println "Using lock1 and lock2"
+                        sleep 200
+                    }
                 }
             }
             start {
                 service.withResourceLock(new CompositeLock(lock2, lock3)) {
-                    println "Using lock2 and lock3"
-                    sleep 200
+                    measureConcurrentRequests {
+                        println "Using lock2 and lock3"
+                        sleep 200
+                    }
                 }
             }
             start {
                 service.withResourceLock(new CompositeLock(lock1, lock3)) {
-                    println "Using lock1 and lock 3"
-                    sleep 200
+                    measureConcurrentRequests {
+                        println "Using lock1 and lock 3"
+                        sleep 200
+                    }
                 }
             }
         }
 
         then:
         noExceptionThrown()
+        assertMaxConcurrentRequests()
     }
 
     public Instant instant() {

@@ -31,8 +31,25 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 public class DefaultCoordinationService implements CoordinationService {
-    private final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    private final ExecutorService executorService;
     private final Set<ResourceLock> resourcesInUse = Collections.synchronizedSet(new HashSet<>());
+
+    public static CoordinationService withFixedThreadPool() {
+        return new DefaultCoordinationService(Runtime.getRuntime().availableProcessors());
+    }
+
+    public static CoordinationService withDynamicPoolSize() {
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        return new DefaultCoordinationService(executorService);
+    }
+
+    private DefaultCoordinationService(int poolSize) {
+        this(Executors.newFixedThreadPool(poolSize));
+    }
+
+    private DefaultCoordinationService(final ExecutorService service) {
+        this.executorService = service;
+    }
 
     @Override
     public void withResourceLock(final ResourceLock lock, final Action<? super ResourcesUnderLock> action) {
@@ -42,7 +59,7 @@ public class DefaultCoordinationService implements CoordinationService {
         while (!lock.tryLock()) {
             lock.await();
         }
-        System.out.println("Acquired " + lock);
+//        System.out.println("Acquired " + lock);
         resourcesInUse.add(lock);
         Future<?> future = executorService.submit(() -> {
             ResourcesUnderLock rul = new DefaultResourcesUnderLock(lockedResources.toArray(new ResourceLock[0]));
@@ -56,7 +73,7 @@ public class DefaultCoordinationService implements CoordinationService {
             Exceptions.sneakyThrow(e.getCause());
         } finally {
             resourcesInUse.remove(lock);
-            System.out.println("Released " + lock);
+//            System.out.println("Released " + lock);
             lock.unlock();
         }
     }
